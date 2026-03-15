@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ══════════════════════════════════════════════════════════════════════
 //  ⚙️  CONFIG — Remplace par ton URL Google Apps Script déployé
@@ -512,18 +512,46 @@ export default function App() {
   const [rdvs, setRdvs]   = useState([]);
   const [draft, setDraft] = useState(null);
   const [hospitals, setHospitals] = useState(DEMO_HOSPITALS);
+  const userRef = useRef(null); // Pour accéder à user.id dans les callbacks
 
   useEffect(()=>{
     const u = localStorage.getItem("dokita_user");
-    const r = localStorage.getItem("dokita_rdvs");
-    if(u){setUser(JSON.parse(u));setScreen("main")}
-    if(r) setRdvs(JSON.parse(r));
+    if(u){
+      const parsed = JSON.parse(u);
+      setUser(parsed);
+      userRef.current = parsed;
+      setScreen("main");
+      // Charger les RDV isolés par user ID
+      const r = localStorage.getItem("dokita_rdvs_" + parsed.id);
+      if(r) setRdvs(JSON.parse(r));
+    }
     fetchHopitaux().then(h => { if(h) setHospitals(h); });
   },[]);
 
-  function login(u){setUser(u);localStorage.setItem("dokita_user",JSON.stringify(u));setScreen("main")}
-  function logout(){localStorage.removeItem("dokita_user");setUser(null);setScreen("login");setTab("home")}
-  function addRdv(r){const u=[r,...rdvs];setRdvs(u);localStorage.setItem("dokita_rdvs",JSON.stringify(u))}
+  function login(u){
+    setUser(u);
+    userRef.current = u;
+    localStorage.setItem("dokita_user", JSON.stringify(u));
+    // Charger les RDV de CET utilisateur uniquement
+    const r = localStorage.getItem("dokita_rdvs_" + u.id);
+    if(r) setRdvs(JSON.parse(r)); else setRdvs([]);
+    setScreen("main");
+  }
+  function logout(){
+    localStorage.removeItem("dokita_user");
+    setUser(null);
+    userRef.current = null;
+    setRdvs([]); // Vider les RDV en mémoire au logout
+    setScreen("login");
+    setTab("home");
+  }
+  function addRdv(r){
+    const updated = [r, ...rdvs];
+    setRdvs(updated);
+    // Clé isolée par ID utilisateur — chaque user voit UNIQUEMENT ses propres RDV
+    const uid = userRef.current?.id;
+    if(uid) localStorage.setItem("dokita_rdvs_" + uid, JSON.stringify(updated));
+  }
   function book(h){setDraft({hospital:h});setTab("book")}
 
   return(
