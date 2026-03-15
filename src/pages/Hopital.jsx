@@ -309,14 +309,22 @@ export default function App(){
     return ()=>clearInterval(t);
   },[hosp?.id]);
 
-  function doLogin(h,s){
+  function doLogin(h,s,password){
     setSecs_(h); setSecs(s);
     localStorage.setItem("dh_hosp",JSON.stringify(h));
     localStorage.setItem("dh_secs",JSON.stringify(s));
+    // dh_credentials survit au logout — permet la reconnexion
+    if(password){
+      const creds = JSON.parse(localStorage.getItem("dh_credentials")||"[]");
+      const exists = creds.find(c=>c.email===h.email);
+      if(!exists) creds.push({email:h.email, password, hopitalId:h.id});
+      localStorage.setItem("dh_credentials", JSON.stringify(creds));
+    }
   }
   function logout(){
     localStorage.removeItem("dh_hosp");
     localStorage.removeItem("dh_secs");
+    // NE PAS supprimer dh_credentials — nécessaire pour se reconnecter
     setSecs_(null); setSecs([]); setRdvs([]); setTab("dash");
   }
 
@@ -440,16 +448,44 @@ function LoginForm({onSave}){
   async function submit(e){
     e.preventDefault(); setErr(""); setLoad(true);
     await new Promise(r=>setTimeout(r,700));
-    const h=localStorage.getItem("dh_hosp");
-    const s=localStorage.getItem("dh_secs");
-    if(h){
-      const parsed=JSON.parse(h);
-      if(parsed.email===email){
-        onSave(parsed, s?JSON.parse(s):[]);
-        setLoad(false); return;
+
+    // 1. Vérifier email + mot de passe dans dh_credentials
+    const creds = JSON.parse(localStorage.getItem("dh_credentials")||"[]");
+    const match = creds.find(c=>c.email===email && c.password===pass);
+
+    if(match){
+      // 2. Chercher les données hôpital sauvegardées
+      const savedHosp = localStorage.getItem("dh_hosp");
+      const savedSecs = localStorage.getItem("dh_secs");
+
+      if(savedHosp){
+        const h = JSON.parse(savedHosp);
+        // Vérifier que c'est bien le même hôpital
+        if(h.email===email){
+          onSave(h, savedSecs?JSON.parse(savedSecs):[]);
+          setLoad(false); return;
+        }
       }
+
+      // 3. dh_hosp effacé après logout → reconstruire depuis dh_credentials
+      // On recharge depuis le Google Sheet
+      try {
+        const r = await fetch(APPS_SCRIPT_URL+"?action=getHopitaux");
+        const data = await r.json();
+        if(data.ok){
+          const found = data.hopitaux.find(h=>h.email===email);
+          if(found){
+            onSave(found, found.sections||[]);
+            setLoad(false); return;
+          }
+        }
+      } catch(e){}
+
+      setErr("Impossible de charger votre profil. Vérifiez votre connexion.");
+      setLoad(false); return;
     }
-    setErr("Compte introuvable. Créez un compte si c'est votre première connexion.");
+
+    setErr("Email ou mot de passe incorrect.");
     setLoad(false);
   }
 
@@ -527,7 +563,7 @@ function RegisterWizard({onSave}){
     });
 
     await sendSheet({action:"registerHopital",...h,sections:JSON.stringify(s)});
-    onSave(h,s);
+    onSave(h, s, info.password); // passer le mot de passe pour dh_credentials
     setLoad(false);
   }
 
